@@ -322,6 +322,13 @@ pub struct CliArgs {
     pub profile: Option<String>,
     pub auto_approve: bool,
     pub project_dir: Option<PathBuf>,
+    /// Explicit override for the project-level TOML config file path.
+    ///
+    /// When set, takes precedence over both `project_dir` and the implicit
+    /// `./.aionrs.toml` fallback. Useful for hosts (e.g. AionUI) that need to
+    /// point at a config file outside the current project's working tree.
+    /// When `None`, behavior is unchanged.
+    pub project_config_path: Option<PathBuf>,
 }
 
 impl Config {
@@ -330,12 +337,16 @@ impl Config {
         // 1. Load global config
         let global = load_config_file(&global_config_path());
 
-        // 2. Load project config (from project_dir if specified, else CWD)
+        // 2. Load project config: explicit override > project_dir/.aionrs.toml > ./.aionrs.toml
         let project_path = cli
-            .project_dir
-            .as_ref()
-            .map(|d| d.join(".aionrs.toml"))
-            .unwrap_or_else(project_config_path);
+            .project_config_path
+            .clone()
+            .unwrap_or_else(|| {
+                cli.project_dir
+                    .as_ref()
+                    .map(|d| d.join(".aionrs.toml"))
+                    .unwrap_or_else(project_config_path)
+            });
         let project = load_config_file(&project_path);
 
         // 3. Merge: global <- project

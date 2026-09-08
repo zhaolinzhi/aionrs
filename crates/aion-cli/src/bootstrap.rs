@@ -40,6 +40,7 @@ pub(crate) fn resolve_config(cli: &Cli) -> anyhow::Result<Config> {
         profile: cli.profile.clone(),
         auto_approve: cli.auto_approve,
         project_dir: cli.project_dir.clone(),
+        project_config_path: None,
     };
 
     let mut config = Config::resolve(&cli_args)?;

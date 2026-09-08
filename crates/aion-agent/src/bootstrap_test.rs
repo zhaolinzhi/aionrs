@@ -70,6 +70,7 @@ mod tests {
             profile: None,
             auto_approve: false,
             project_dir: None,
+            project_config_path: None,
         })
         .unwrap()
     }

@@ -758,6 +758,7 @@ mod tests_compact {
             profile: None,
             auto_approve: true,
             project_dir: None,
+            project_config_path: None,
         })
         .unwrap()
     }

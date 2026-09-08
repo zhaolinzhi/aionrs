@@ -1098,6 +1098,7 @@ max_tokens = 1234
             profile: None,
             auto_approve: false,
             project_dir: Some(tmp.path().to_path_buf()),
+            project_config_path: None,
         };
 
         let config = Config::resolve(&base_cli_args).unwrap();
@@ -1177,6 +1178,7 @@ effort_levels = ["low", "medium"]
             profile: None,
             auto_approve: false,
             project_dir: Some(tmp.path().to_path_buf()),
+            project_config_path: None,
         };
 
         let config = Config::resolve(&cli).unwrap();
@@ -1216,6 +1218,7 @@ effort_levels = ["low", "medium"]
             profile: None,
             auto_approve: false,
             project_dir: Some(tmp.path().to_path_buf()),
+            project_config_path: None,
         };
 
         let config = Config::resolve(&cli).unwrap();
@@ -1245,6 +1248,7 @@ effort_levels = ["low", "medium"]
             profile: None,
             auto_approve: false,
             project_dir: Some(tmp.path().to_path_buf()),
+            project_config_path: None,
         };
 
         let config = Config::resolve(&cli).unwrap();
@@ -1279,6 +1283,7 @@ supports_thinking = false
             profile: None,
             auto_approve: false,
             project_dir: Some(tmp.path().to_path_buf()),
+            project_config_path: None,
         };
 
         let config = Config::resolve(&cli).unwrap();
@@ -1308,6 +1313,7 @@ supports_thinking = false
             profile: None,
             auto_approve: false,
             project_dir: Some(tmp.path().to_path_buf()),
+            project_config_path: None,
         };
 
         let config = Config::resolve(&cli).unwrap();
@@ -1334,6 +1340,7 @@ supports_thinking = false
             profile: None,
             auto_approve: false,
             project_dir: Some(tmp.path().to_path_buf()),
+            project_config_path: None,
         };
 
         let err = Config::resolve(&cli).unwrap_err().to_string();
@@ -1367,6 +1374,7 @@ base_url = "https://api.openai.com"
             profile: None,
             auto_approve: false,
             project_dir: Some(tmp.path().to_path_buf()),
+            project_config_path: None,
         };
 
         let config = Config::resolve(&cli).unwrap();
@@ -1392,6 +1400,7 @@ base_url = "https://api.openai.com"
             profile: None,
             auto_approve: false,
             project_dir: Some(tmp.path().to_path_buf()),
+            project_config_path: None,
         };
 
         let config = Config::resolve(&cli).unwrap();
@@ -1436,6 +1445,7 @@ max_request_body_bytes = 1048576
             profile: None,
             auto_approve: false,
             project_dir: Some(tmp.path().to_path_buf()),
+            project_config_path: None,
         };
 
         let config = Config::resolve(&cli).unwrap();
@@ -1499,6 +1509,7 @@ supports_effort = true
             profile: None,
             auto_approve: false,
             project_dir: Some(tmp.path().to_path_buf()),
+            project_config_path: None,
         };
 
         let alias_config = Config::resolve(&base_cli).unwrap();
@@ -1555,6 +1566,7 @@ tool_wire_shape = "anthropic_input_schema"
             profile: None,
             auto_approve: false,
             project_dir: Some(tmp.path().to_path_buf()),
+            project_config_path: None,
         };
 
         let config = Config::resolve(&cli).unwrap();
@@ -1580,6 +1592,7 @@ tool_wire_shape = "anthropic_input_schema"
             profile: None,
             auto_approve: false,
             project_dir: Some(tmp.path().to_path_buf()),
+            project_config_path: None,
         };
 
         let config = Config::resolve(&cli_args).unwrap();
@@ -1603,6 +1616,7 @@ tool_wire_shape = "anthropic_input_schema"
             profile: None,
             auto_approve: false,
             project_dir: None,
+            project_config_path: None,
         };
 
         let config = Config::resolve(&cli_args);
@@ -1646,6 +1660,7 @@ tool_wire_shape = "anthropic_input_schema"
             profile: None,
             auto_approve: false,
             project_dir: Some(tmp.path().to_path_buf()),
+            project_config_path: None,
         };
         Config::resolve(&cli).unwrap()
     }
@@ -1684,5 +1699,106 @@ max_tokens_field = "max_tokens"
 "#,
         );
         assert_eq!(config.compat.max_tokens_field(), "max_tokens");
+    }
+
+    // -------------------------------------------------------------------------
+    // project_config_path override on CliArgs
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_project_config_path_override_takes_precedence_over_project_dir() {
+        // Two distinct directories. `project_dir` points at an EMPTY directory;
+        // `project_config_path` points at a DIFFERENT directory holding a TOML
+        // file with non-default values. Config::resolve must read from the
+        // explicit override, proving the new field actually takes effect.
+        let empty_dir = tempfile::tempdir().unwrap();
+        let override_dir = tempfile::tempdir().unwrap();
+        let override_toml = override_dir.path().join("custom-config.toml");
+        std::fs::write(
+            &override_toml,
+            r#"
+[default]
+max_tokens = 7777
+max_tool_call_malformed_turns = 9
+max_tool_call_failure_turns = 11
+"#,
+        )
+        .unwrap();
+
+        let cli = CliArgs {
+            provider: Some("anthropic".into()),
+            api_key: Some("test-key".into()),
+            base_url: None,
+            model: None,
+            max_tokens: None,
+            thinking: None,
+            thinking_budget: None,
+            max_turns: None,
+            max_tool_call_malformed_turns: None,
+            max_tool_call_failure_turns: None,
+            system_prompt: None,
+            profile: None,
+            auto_approve: false,
+            project_dir: Some(empty_dir.path().to_path_buf()),
+            project_config_path: Some(override_toml.clone()),
+        };
+
+        let config = Config::resolve(&cli).unwrap();
+
+        assert_eq!(
+            config.max_tokens,
+            Some(7777),
+            "explicit project_config_path must be read"
+        );
+        assert_eq!(
+            config.max_tool_call_malformed_turns,
+            Some(9),
+            "explicit project_config_path must override project_dir"
+        );
+        assert_eq!(
+            config.max_tool_call_failure_turns,
+            Some(11),
+            "explicit project_config_path must override project_dir"
+        );
+    }
+
+    #[test]
+    fn test_project_config_path_none_falls_back_to_project_dir() {
+        // project_config_path is None; project_dir points at a directory with
+        // .aionrs.toml — the original behavior must be preserved.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join(".aionrs.toml"),
+            r#"
+[default]
+max_tokens = 4321
+"#,
+        )
+        .unwrap();
+
+        let cli = CliArgs {
+            provider: Some("anthropic".into()),
+            api_key: Some("test-key".into()),
+            base_url: None,
+            model: None,
+            max_tokens: None,
+            thinking: None,
+            thinking_budget: None,
+            max_turns: None,
+            max_tool_call_malformed_turns: None,
+            max_tool_call_failure_turns: None,
+            system_prompt: None,
+            profile: None,
+            auto_approve: false,
+            project_dir: Some(tmp.path().to_path_buf()),
+            project_config_path: None,
+        };
+
+        let config = Config::resolve(&cli).unwrap();
+        assert_eq!(
+            config.max_tokens,
+            Some(4321),
+            "fallback path (project_dir/.aionrs.toml) must still work"
+        );
     }
 }

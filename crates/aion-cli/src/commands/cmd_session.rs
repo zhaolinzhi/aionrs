@@ -28,6 +28,7 @@ fn list_sessions() -> anyhow::Result<()> {
         profile: None,
         auto_approve: false,
         project_dir: None,
+        project_config_path: None,
     };
     let config = Config::resolve(&cli_args)?;
     let session_mgr = SessionManager::new(config.session.directory.clone().into(), config.session.max_sessions);
