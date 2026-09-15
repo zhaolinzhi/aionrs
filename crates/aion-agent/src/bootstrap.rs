@@ -285,6 +285,7 @@ impl AgentBootstrap {
             None,
             environment.memory_dir.as_deref(),
             false,
+            self.config.plan.prompt.as_deref(),
             self.config.compact.toon,
             &self.tool_policy,
         );

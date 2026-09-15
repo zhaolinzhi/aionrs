@@ -37,6 +37,7 @@ pub(crate) fn resolve_config(cli: &Cli) -> anyhow::Result<Config> {
         max_tool_call_malformed_turns: cli.max_tool_call_malformed_turns,
         max_tool_call_failure_turns: cli.max_tool_call_failure_turns,
         system_prompt: cli.system_prompt.clone(),
+        plan_mode_prompt: cli.plan_mode_prompt.clone(),
         profile: cli.profile.clone(),
         auto_approve: cli.auto_approve,
         project_dir: cli.project_dir.clone(),

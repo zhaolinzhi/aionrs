@@ -37,6 +37,18 @@ enabled = false
         let cfg: PlanConfig = toml::from_str("").unwrap();
         assert!(cfg.enabled);
         assert_eq!(cfg.plan_directory, ".aionrs/plans");
+        assert!(cfg.prompt.is_none());
+    }
+
+    #[test]
+    fn toml_prompt_field_round_trips() {
+        let toml_str = r#"
+enabled = true
+plan_directory = "/custom/plans"
+prompt = "MY OVERRIDE PLAN MODE TEXT"
+"#;
+        let cfg: PlanConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.prompt.as_deref(), Some("MY OVERRIDE PLAN MODE TEXT"));
     }
 
     #[test]
@@ -44,6 +56,7 @@ enabled = false
         let cfg = PlanConfig {
             enabled: false,
             plan_directory: "/tmp/plans".to_string(),
+            prompt: None,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: PlanConfig = serde_json::from_str(&json).unwrap();

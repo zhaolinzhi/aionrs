@@ -25,6 +25,7 @@ fn list_sessions() -> anyhow::Result<()> {
         max_tool_call_malformed_turns: None,
         max_tool_call_failure_turns: None,
         system_prompt: None,
+        plan_mode_prompt: None,
         profile: None,
         auto_approve: false,
         project_dir: None,

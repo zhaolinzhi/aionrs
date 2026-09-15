@@ -51,6 +51,7 @@ fn tc_4_3_01_tool_guidance_section_exists() {
         None,
         None,
         false,
+        None,
         false,
     );
     assert!(
@@ -74,6 +75,7 @@ fn tc_4_3_02_bash_prohibition_list() {
         None,
         None,
         false,
+        None,
         false,
     );
 
@@ -119,6 +121,7 @@ fn tc_4_3_03_parallel_call_guidance() {
         None,
         None,
         false,
+        None,
         false,
     );
     assert!(result.contains("parallel"), "should contain parallel call guidance");
@@ -143,6 +146,7 @@ fn tc_4_3_04_edit_write_read_rules() {
         None,
         None,
         false,
+        None,
         false,
     );
     assert!(
@@ -170,6 +174,7 @@ fn tc_4_3_05_order_after_intro_before_custom() {
         None,
         None,
         false,
+        None,
         false,
     );
 
@@ -207,6 +212,7 @@ fn tc_4_3_06_order_before_skills() {
         None,
         None,
         false,
+        None,
         false,
     );
 
@@ -235,6 +241,7 @@ fn tc_4_3_06_order_before_memory() {
         None,
         Some(&mem_dir),
         false,
+        None,
         false,
     );
 
@@ -275,6 +282,7 @@ fn tc_4_3_07_all_sections_coexist() {
         None,
         Some(&mem_dir),
         true, // plan mode active
+        None,
         false,
     );
 
@@ -316,6 +324,7 @@ fn tc_4_3_08_guidance_in_plan_mode() {
         None,
         None,
         true,
+        None,
         false,
     );
     assert!(

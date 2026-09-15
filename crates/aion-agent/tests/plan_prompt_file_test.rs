@@ -71,6 +71,7 @@ fn tc_3_4_03_system_prompt_includes_plan_instructions_when_active() {
         None,
         None,
         true,
+        None,
         false,
     );
 
@@ -104,6 +105,7 @@ fn tc_3_4_04_system_prompt_excludes_plan_instructions_when_inactive() {
         None,
         None,
         false,
+        None,
         false,
     );
 
@@ -224,6 +226,7 @@ fn plan_instructions_appear_after_memory_before_skills() {
         None,
         Some(&mem_dir),
         true,
+        None,
         false,
     );
 
@@ -252,4 +255,126 @@ fn write_plan_overwrites_existing_content() {
 
     let result = read_plan(&path).unwrap();
     assert_eq!(result, Some("version 2".to_string()));
+}
+
+// ---------------------------------------------------------------------------
+// Override behavior: an externally-provided plan mode prompt text replaces
+// the built-in default returned by `plan_mode_instructions()`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn override_replaces_default_plan_instructions() {
+    let override_text = "CUSTOM PLAN MODE PROMPT FOR TESTING";
+    let result = build_system_prompt(
+        &mut SystemPromptCache::new(),
+        None,
+        "/tmp",
+        "test-model",
+        &[],
+        None,
+        None,
+        true, // plan_mode_active
+        Some(override_text),
+        false,
+    );
+
+    assert!(
+        result.contains(override_text),
+        "override text should be present in the joined system prompt"
+    );
+    let default_marker = "# Plan Mode";
+    assert!(
+        !result.contains(default_marker),
+        "default plan mode instructions should NOT be present when an override is supplied"
+    );
+}
+
+#[test]
+fn none_override_uses_default_plan_instructions() {
+    let result = build_system_prompt(
+        &mut SystemPromptCache::new(),
+        None,
+        "/tmp",
+        "test-model",
+        &[],
+        None,
+        None,
+        true, // plan_mode_active
+        None,
+        false,
+    );
+
+    assert!(
+        result.contains("# Plan Mode"),
+        "default plan mode instructions should be present when override is None"
+    );
+    assert!(
+        result.contains("ExitPlanMode"),
+        "default prompt should still mention ExitPlanMode"
+    );
+}
+
+#[test]
+fn override_does_not_apply_when_plan_mode_inactive() {
+    let override_text = "CUSTOM PLAN MODE PROMPT FOR TESTING";
+    let result = build_system_prompt(
+        &mut SystemPromptCache::new(),
+        None,
+        "/tmp",
+        "test-model",
+        &[],
+        None,
+        None,
+        false, // plan_mode_active = false
+        Some(override_text),
+        false,
+    );
+
+    assert!(
+        !result.contains(override_text),
+        "override text should NOT be injected when plan mode is inactive"
+    );
+    assert!(
+        !result.contains("# Plan Mode"),
+        "default plan mode instructions should NOT be injected when plan mode is inactive"
+    );
+}
+
+#[test]
+fn override_change_invalidates_cache() {
+    let override_a = "OVERRIDE_A_TEXT";
+    let override_b = "OVERRIDE_B_TEXT";
+
+    let mut cache = SystemPromptCache::new();
+    let first = build_system_prompt(
+        &mut cache,
+        None,
+        "/tmp",
+        "test-model",
+        &[],
+        None,
+        None,
+        true,
+        Some(override_a),
+        false,
+    );
+    assert!(first.contains(override_a));
+    assert!(!first.contains(override_b));
+
+    // Second call with a different override must rebuild, not return the
+    // cached value from the first call.
+    let second = build_system_prompt(
+        &mut cache,
+        None,
+        "/tmp",
+        "test-model",
+        &[],
+        None,
+        None,
+        true,
+        Some(override_b),
+        false,
+    );
+    assert!(second.contains(override_b));
+    assert!(!second.contains(override_a));
 }

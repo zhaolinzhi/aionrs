@@ -14,6 +14,14 @@ pub struct PlanConfig {
     /// Directory for plan files, relative to the project root.
     #[serde(default = "default_plan_directory")]
     pub plan_directory: String,
+
+    /// Optional override for the plan mode system prompt text.
+    ///
+    /// When `Some`, the embedded text replaces the built-in instructions
+    /// returned by `aion_agent::plan::prompt::plan_mode_instructions()`.
+    /// When `None`, the built-in default is used.
+    #[serde(default)]
+    pub prompt: Option<String>,
 }
 
 impl Default for PlanConfig {
@@ -21,6 +29,7 @@ impl Default for PlanConfig {
         Self {
             enabled: default_true(),
             plan_directory: default_plan_directory(),
+            prompt: None,
         }
     }
 }

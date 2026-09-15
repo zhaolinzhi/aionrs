@@ -160,6 +160,7 @@ fn tc_a3_02_plan_mode_system_prompt_injection() {
         None,
         None,
         true,
+        None,
         false,
     );
 
@@ -202,6 +203,7 @@ fn tc_a3_02_plan_mode_system_prompt_injection() {
         None,
         None,
         false,
+        None,
         false,
     );
 

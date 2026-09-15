@@ -342,7 +342,38 @@ A read-only exploration mode where the agent focuses on understanding the codeba
 [plan]
 enabled = true                    # Register Plan Mode tools (default: true)
 plan_directory = ".aionrs/plans"  # Where plan files are saved
+# Optional: replace the built-in plan mode instructions text. When unset,
+# aion_agent::plan::prompt::plan_mode_instructions() is used.
+# prompt = "Your custom plan mode instructions here"
 ```
+
+### Customizing the plan mode instructions
+
+By default the system prompt gets a built-in plan mode instructions block
+appended while plan mode is active. Hosts (e.g. AionUI) and CLI users can
+replace this text in two ways:
+
+1. **TOML config** — set `[plan].prompt` in `~/.aionrs/config.toml` or the
+   project-level `.aionrs.toml`:
+
+   ```toml
+   [plan]
+   prompt = """
+   You are in plan mode. Restrict yourself to read-only tools. Produce a
+   concise implementation plan and call ExitPlanMode when done.
+   """
+   ```
+
+2. **CLI flag** — pass `--plan-mode-prompt <TEXT>` to override on a single
+   invocation. The CLI flag takes precedence over the TOML value.
+
+   ```bash
+   aionrs --plan-mode-prompt "Only read files. Plan first, ExitPlanMode after."
+   ```
+
+When `prompt` is `null`/unset, the built-in default is used. The override
+text replaces the built-in default **only** while plan mode is active — it
+is never injected otherwise.
 
 ### Workflow Phases
 

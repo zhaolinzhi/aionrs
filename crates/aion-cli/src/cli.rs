@@ -60,6 +60,11 @@ pub(crate) struct Cli {
     #[arg(long)]
     pub(crate) system_prompt: Option<String>,
 
+    /// Override the plan mode system prompt text. When unset, the built-in
+    /// default from aion_agent::plan::prompt is used.
+    #[arg(long)]
+    pub(crate) plan_mode_prompt: Option<String>,
+
     /// Named profile from config file
     #[arg(long)]
     pub(crate) profile: Option<String>,

@@ -136,6 +136,11 @@ pub struct AgentEngine {
     toon_enabled: bool,
     /// Runtime plan mode state and restoration data.
     plan_state: PlanState,
+    /// Optional override for the plan mode system prompt text. When `Some`,
+    /// replaces the built-in default returned by
+    /// `crate::plan::prompt::plan_mode_instructions()`. When `None`, the
+    /// built-in default is used.
+    plan_mode_prompt_override: Option<String>,
     /// Shared flag read by EnterPlanMode/ExitPlanMode tools to validate transitions.
     /// Updated by the engine when processing PlanModeTransition modifiers.
     plan_active_flag: Option<Arc<AtomicBool>>,
@@ -223,6 +228,7 @@ impl AgentEngine {
             compact_level: config.compact.compaction,
             toon_enabled: config.compact.toon,
             plan_state: PlanState::default(),
+            plan_mode_prompt_override: config.plan.prompt.clone(),
             plan_active_flag: None,
             cache_detector: CacheBreakDetector::new(),
             commands: default_registry(),
@@ -318,6 +324,7 @@ impl AgentEngine {
             compact_level: config.compact.compaction,
             toon_enabled: config.compact.toon,
             plan_state: PlanState::default(),
+            plan_mode_prompt_override: config.plan.prompt.clone(),
             plan_active_flag: None,
             cache_detector: CacheBreakDetector::new(),
             commands: default_registry(),
@@ -610,9 +617,15 @@ impl AgentEngine {
         let image_input = self.compat.image_input();
         let tools = self.tool_definitions_for_turn(kind);
 
-        // Build system prompt: append plan mode instructions when active
+        // Build system prompt: append plan mode instructions when active.
+        // Use the override text if provided, otherwise fall back to the
+        // built-in default from `plan_mode_instructions()`.
         let system = if self.plan_state.is_active {
-            format!("{}\n\n{}", self.system_prompt, plan_mode_instructions())
+            let plan_prompt = self
+                .plan_mode_prompt_override
+                .as_deref()
+                .unwrap_or_else(|| plan_mode_instructions());
+            format!("{}\n\n{}", self.system_prompt, plan_prompt)
         } else {
             self.system_prompt.clone()
         };
@@ -1078,7 +1091,11 @@ impl AgentEngine {
 
     fn dynamic_system_tokens(&self) -> u64 {
         if self.plan_state.is_active {
-            estimate_text_tokens(plan_mode_instructions())
+            let plan_prompt = self
+                .plan_mode_prompt_override
+                .as_deref()
+                .unwrap_or_else(|| plan_mode_instructions());
+            estimate_text_tokens(plan_prompt)
         } else {
             0
         }

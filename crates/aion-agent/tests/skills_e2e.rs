@@ -219,6 +219,7 @@ async fn e7_system_prompt_injection() {
         None,
         None,
         false,
+        None,
         false,
     );
     assert!(prompt.contains("greet"), "E7 FAIL: 'greet' not in system prompt");

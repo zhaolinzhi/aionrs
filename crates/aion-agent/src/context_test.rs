@@ -55,6 +55,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(prompt.contains(cwd), "system prompt should contain the cwd");
@@ -71,6 +72,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(
@@ -96,6 +98,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(
@@ -213,6 +216,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(
@@ -236,6 +240,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(
@@ -269,6 +274,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(result.contains("visible-skill"), "visible skill should appear");
@@ -290,6 +296,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(
@@ -310,6 +317,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(
@@ -334,6 +342,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         let custom_pos = result.find("Custom text").unwrap();
@@ -357,6 +366,7 @@ mod tests {
             Some(50),
             None,
             false,
+            None,
             false,
         );
         // Minimal mode: skill appears as name only, no ': '
@@ -381,6 +391,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(
@@ -405,6 +416,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
 
@@ -436,6 +448,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
 
@@ -468,6 +481,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
 
@@ -491,6 +505,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(
@@ -519,6 +534,7 @@ mod tests {
             None,
             Some(&mem_dir),
             false,
+            None,
             false,
         );
 
@@ -544,6 +560,7 @@ mod tests {
             None,
             Some(Path::new("/nonexistent/memory/dir")),
             false,
+            None,
             false,
         );
 
@@ -570,6 +587,7 @@ mod tests {
             None,
             Some(&mem_dir),
             false,
+            None,
             false,
         );
 
@@ -603,6 +621,7 @@ mod tests {
             None,
             Some(&mem_dir),
             false,
+            None,
             false,
         );
 
@@ -630,6 +649,7 @@ mod tests {
             None,
             Some(&mem_dir),
             false,
+            None,
             false,
         );
 
@@ -650,6 +670,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(
@@ -669,6 +690,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(result.contains("Glob"), "should mention Glob as find/ls replacement");
@@ -695,6 +717,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(result.contains("parallel"), "should contain parallel call guidance");
@@ -715,6 +738,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(
@@ -734,6 +758,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(
@@ -753,6 +778,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         let intro_pos = result.find("Working directory").unwrap();
@@ -777,6 +803,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         let guidance_pos = result.find("# Using your tools").unwrap();
@@ -798,6 +825,7 @@ mod tests {
             None,
             None,
             true,
+            None,
             false,
         );
         assert!(
@@ -817,6 +845,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(
@@ -840,6 +869,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
             &policy,
         );
@@ -871,6 +901,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
             &restricted,
         );
@@ -886,6 +917,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
             &ToolPolicy::Unrestricted,
         );
@@ -908,6 +940,7 @@ mod tests {
             None,
             Some(&mem_dir),
             false,
+            None,
             false,
         );
         let guidance_pos = result.find("# Using your tools").unwrap();
@@ -980,18 +1013,62 @@ mod tests {
     #[test]
     fn build_system_prompt_uses_cache_on_second_call() {
         let mut cache = SystemPromptCache::new();
-        let first = build_system_prompt(&mut cache, None, "/tmp", "test-model", &[], None, None, false, false);
+        let first = build_system_prompt(
+            &mut cache,
+            None,
+            "/tmp",
+            "test-model",
+            &[],
+            None,
+            None,
+            false,
+            None,
+            false,
+        );
         assert!(cache.joined.is_some());
 
-        let second = build_system_prompt(&mut cache, None, "/tmp", "test-model", &[], None, None, false, false);
+        let second = build_system_prompt(
+            &mut cache,
+            None,
+            "/tmp",
+            "test-model",
+            &[],
+            None,
+            None,
+            false,
+            None,
+            false,
+        );
         assert_eq!(first, second);
     }
 
     #[test]
     fn build_system_prompt_plan_mode_change_rebuilds() {
         let mut cache = SystemPromptCache::new();
-        let without_plan = build_system_prompt(&mut cache, None, "/tmp", "test-model", &[], None, None, false, false);
-        let with_plan = build_system_prompt(&mut cache, None, "/tmp", "test-model", &[], None, None, true, false);
+        let without_plan = build_system_prompt(
+            &mut cache,
+            None,
+            "/tmp",
+            "test-model",
+            &[],
+            None,
+            None,
+            false,
+            None,
+            false,
+        );
+        let with_plan = build_system_prompt(
+            &mut cache,
+            None,
+            "/tmp",
+            "test-model",
+            &[],
+            None,
+            None,
+            true,
+            None,
+            false,
+        );
         assert_ne!(without_plan, with_plan);
     }
 
@@ -1008,6 +1085,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             true,
         );
         assert!(
@@ -1031,6 +1109,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             false,
         );
         assert!(

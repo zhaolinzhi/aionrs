@@ -319,6 +319,9 @@ pub struct CliArgs {
     pub max_tool_call_malformed_turns: Option<usize>,
     pub max_tool_call_failure_turns: Option<usize>,
     pub system_prompt: Option<String>,
+    /// Optional override for the plan mode system prompt text injected
+    /// while plan mode is active. When `None`, the built-in default is used.
+    pub plan_mode_prompt: Option<String>,
     pub profile: Option<String>,
     pub auto_approve: bool,
     pub project_dir: Option<PathBuf>,
@@ -338,15 +341,12 @@ impl Config {
         let global = load_config_file(&global_config_path());
 
         // 2. Load project config: explicit override > project_dir/.aionrs.toml > ./.aionrs.toml
-        let project_path = cli
-            .project_config_path
-            .clone()
-            .unwrap_or_else(|| {
-                cli.project_dir
-                    .as_ref()
-                    .map(|d| d.join(".aionrs.toml"))
-                    .unwrap_or_else(project_config_path)
-            });
+        let project_path = cli.project_config_path.clone().unwrap_or_else(|| {
+            cli.project_dir
+                .as_ref()
+                .map(|d| d.join(".aionrs.toml"))
+                .unwrap_or_else(project_config_path)
+        });
         let project = load_config_file(&project_path);
 
         // 3. Merge: global <- project
@@ -399,6 +399,13 @@ impl Config {
             .or(merged.default.max_tool_call_failure_turns);
         let system_prompt = cli.system_prompt.clone().or(merged.default.system_prompt.clone());
 
+        // CLI --plan-mode-prompt wins over the merged config's [plan].prompt.
+        let plan_mode_prompt = cli.plan_mode_prompt.clone().or_else(|| merged.plan.prompt.clone());
+        let mut plan = merged.plan;
+        if plan_mode_prompt.is_some() {
+            plan.prompt = plan_mode_prompt;
+        }
+
         // 6. Resolve API key: CLI > config file > env var
         let api_key = resolve_api_key(cli.api_key.as_deref(), provider_config.api_key.as_deref(), provider)?;
 
@@ -446,7 +453,7 @@ impl Config {
             tools,
             session: merged.session,
             compact: merged.compact,
-            plan: merged.plan,
+            plan,
             shell: merged.shell,
             file_cache: merged.file_cache,
             hooks: merged.hooks,

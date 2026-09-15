@@ -368,6 +368,7 @@ fn case_8_toon_system_prompt_injection() {
         None,
         None,
         false,
+        None,
         true, // toon_enabled
     );
 
@@ -396,6 +397,7 @@ fn case_8_toon_system_prompt_injection() {
         None,
         None,
         false,
+        None,
         false, // toon_enabled
     );
 

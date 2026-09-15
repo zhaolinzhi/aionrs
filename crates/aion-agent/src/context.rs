@@ -23,6 +23,10 @@ pub struct SystemPromptCache {
     pub(crate) joined: Option<String>,
     /// Track last plan_mode_active value to detect changes.
     pub(crate) last_plan_mode: bool,
+    /// Track last plan_mode_override value to detect changes. When the
+    /// override text changes (or transitions between Some/None), the joined
+    /// cache must be rebuilt because the plan mode section is not cached.
+    pub(crate) last_plan_mode_override: Option<String>,
     /// Track last toon_enabled value to detect changes.
     pub(crate) last_toon_enabled: bool,
     /// Track shell prompt text to invalidate intro when shell resolution changes.
@@ -37,6 +41,7 @@ impl SystemPromptCache {
             sections: HashMap::new(),
             joined: None,
             last_plan_mode: false,
+            last_plan_mode_override: None,
             last_toon_enabled: false,
             last_shell_prompt: None,
             last_tool_policy: ToolPolicy::default(),
@@ -154,6 +159,7 @@ pub fn build_system_prompt(
     context_window_tokens: Option<usize>,
     memory_dir: Option<&Path>,
     plan_mode_active: bool,
+    plan_mode_override: Option<&str>,
     toon_enabled: bool,
 ) -> String {
     let shell = default_shell();
@@ -167,6 +173,7 @@ pub fn build_system_prompt(
         context_window_tokens,
         memory_dir,
         plan_mode_active,
+        plan_mode_override,
         toon_enabled,
     )
 }
@@ -183,6 +190,7 @@ pub fn build_system_prompt_with_shell(
     context_window_tokens: Option<usize>,
     memory_dir: Option<&Path>,
     plan_mode_active: bool,
+    plan_mode_override: Option<&str>,
     toon_enabled: bool,
 ) -> String {
     build_system_prompt_with_shell_and_tool_policy(
@@ -195,6 +203,7 @@ pub fn build_system_prompt_with_shell(
         context_window_tokens,
         memory_dir,
         plan_mode_active,
+        plan_mode_override,
         toon_enabled,
         &ToolPolicy::Unrestricted,
     )
@@ -213,6 +222,7 @@ pub(crate) fn build_system_prompt_with_shell_and_tool_policy(
     context_window_tokens: Option<usize>,
     memory_dir: Option<&Path>,
     plan_mode_active: bool,
+    plan_mode_override: Option<&str>,
     toon_enabled: bool,
     tool_policy: &ToolPolicy,
 ) -> String {
@@ -228,9 +238,13 @@ pub(crate) fn build_system_prompt_with_shell_and_tool_policy(
         cache.last_shell_prompt = Some(shell_prompt.clone());
     }
 
-    // Fast path: return cached joined result if nothing changed
+    // Fast path: return cached joined result if nothing changed.
+    // The plan mode override text is part of the inputs that affect the
+    // joined string but is excluded from `cache.sections`, so it must be
+    // tracked here to keep the cache in sync.
     if let Some(ref joined) = cache.joined
         && cache.last_plan_mode == plan_mode_active
+        && cache.last_plan_mode_override.as_deref() == plan_mode_override
         && cache.last_toon_enabled == toon_enabled
     {
         return joined.clone();
@@ -300,9 +314,12 @@ pub(crate) fn build_system_prompt_with_shell_and_tool_policy(
         parts.push(toon_section.clone());
     }
 
-    // Section: plan mode (NOT cached — rebuilt every call when active)
+    // Section: plan mode (NOT cached — rebuilt every call when active).
+    // If an override text is provided, use it; otherwise fall back to the
+    // built-in default.
     if plan_mode_active {
-        parts.push(plan_prompt::plan_mode_instructions().to_string());
+        let plan_text = plan_mode_override.unwrap_or_else(|| plan_prompt::plan_mode_instructions());
+        parts.push(plan_text.to_string());
     }
 
     // Section: skills (cached, event-invalidated)
@@ -331,6 +348,7 @@ pub(crate) fn build_system_prompt_with_shell_and_tool_policy(
     let joined = parts.join("\n\n");
     cache.joined = Some(joined.clone());
     cache.last_plan_mode = plan_mode_active;
+    cache.last_plan_mode_override = plan_mode_override.map(str::to_string);
     cache.last_toon_enabled = toon_enabled;
     joined
 }
