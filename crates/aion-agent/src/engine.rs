@@ -625,6 +625,7 @@ impl AgentEngine {
                 .plan_mode_prompt_override
                 .as_deref()
                 .unwrap_or_else(|| plan_mode_instructions());
+
             format!("{}\n\n{}", self.system_prompt, plan_prompt)
         } else {
             self.system_prompt.clone()
