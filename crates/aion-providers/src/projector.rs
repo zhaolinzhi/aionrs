@@ -222,6 +222,7 @@ impl OpenAiProjector {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ResolvedToolWireShape {
     OpenAiFunction,
+    OpenAiFlatFunction,
     AnthropicInputSchema,
 }
 
@@ -229,6 +230,7 @@ impl ResolvedToolWireShape {
     pub(crate) const fn as_config_value(self) -> &'static str {
         match self {
             Self::OpenAiFunction => "openai_function",
+            Self::OpenAiFlatFunction => "openai_flat_function",
             Self::AnthropicInputSchema => "anthropic_input_schema",
         }
     }
@@ -238,6 +240,7 @@ fn resolve_tool_wire_shape(compat: &ProviderCompat, native: ResolvedToolWireShap
     match compat.tool_wire_shape() {
         ToolWireShape::Native => native,
         ToolWireShape::OpenAiFunction => ResolvedToolWireShape::OpenAiFunction,
+        ToolWireShape::OpenAiFlatFunction => ResolvedToolWireShape::OpenAiFlatFunction,
         ToolWireShape::AnthropicInputSchema => ResolvedToolWireShape::AnthropicInputSchema,
     }
 }
@@ -249,6 +252,7 @@ pub(crate) fn project_tools(tools: &[ToolDef], shape: ResolvedToolWireShape) -> 
 fn project_tool(tool: &ToolDef, shape: ResolvedToolWireShape) -> Value {
     match shape {
         ResolvedToolWireShape::OpenAiFunction => project_openai_function_tool(tool),
+        ResolvedToolWireShape::OpenAiFlatFunction => project_openai_flat_function_tool(tool),
         ResolvedToolWireShape::AnthropicInputSchema => project_anthropic_input_schema_tool(tool),
     }
 }
@@ -262,6 +266,20 @@ fn project_openai_function_tool(tool: &ToolDef) -> Value {
             "description": description,
             "parameters": parameters
         }
+    })
+}
+
+/// Flat OpenAI tool shape: `name`, `description`, and `parameters` live at the
+/// top level rather than nested under a `function` key. This matches the
+/// OpenAI Responses API tool shape and some custom OpenAI-compatible gateways
+/// that validate `tools[i].name` directly.
+fn project_openai_flat_function_tool(tool: &ToolDef) -> Value {
+    let (description, parameters) = tool_description_and_schema(tool);
+    json!({
+        "type": "function",
+        "name": tool.name,
+        "description": description,
+        "parameters": parameters
     })
 }
 
@@ -294,6 +312,7 @@ fn projected_tool_schema_mut(tool: &mut Value, shape: ResolvedToolWireShape) -> 
         ResolvedToolWireShape::OpenAiFunction => tool
             .get_mut("function")
             .and_then(|function| function.get_mut("parameters")),
+        ResolvedToolWireShape::OpenAiFlatFunction => tool.get_mut("parameters"),
         ResolvedToolWireShape::AnthropicInputSchema => tool.get_mut("input_schema"),
     }
 }
@@ -311,6 +330,14 @@ pub(crate) fn classify_tools_wire_shape_mismatch(
     let expected_shape =
         if lower.contains("body.tools[0].function") && (lower.contains("missing") || lower.contains("required")) {
             Some(ResolvedToolWireShape::OpenAiFunction)
+        } else if lower.contains("tools[i].name")
+            || (lower.contains("tools[0].name") && (lower.contains("missing") || lower.contains("missingparameter")))
+        {
+            // Some custom OpenAI-compatible gateways validate `tools[i].name` at
+            // the top level instead of under `function.name`. The Chat Completions
+            // shape nests the name, so the fix is to switch to the flat OpenAI
+            // shape.
+            Some(ResolvedToolWireShape::OpenAiFlatFunction)
         } else if lower.contains("input tag function does not match expected custom") {
             Some(ResolvedToolWireShape::AnthropicInputSchema)
         } else {

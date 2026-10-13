@@ -562,6 +562,23 @@ mod tests {
     }
 
     #[test]
+    fn test_tool_wire_shape_openai_override_openai_flat_function() {
+        let request = test_request(test_tools(), None);
+        let user_compat: ProviderCompat =
+            serde_json::from_value(json!({"tool_wire_shape": "openai_flat_function"})).unwrap();
+        let compat = ProviderCompat::merge(ProviderCompat::openai_defaults(), user_compat);
+
+        let body = OpenAiProjector::project(&request, &compat).expect("request body projection should succeed");
+
+        // Flat OpenAI shape: name lives at the top level, not under `function`.
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["tools"][0]["name"], "read");
+        assert!(body["tools"][0].get("parameters").is_some());
+        assert!(body["tools"][0].get("function").is_none());
+        assert!(body["tools"][0].get("input_schema").is_none());
+    }
+
+    #[test]
     fn test_tool_wire_shape_openai_override_anthropic_input_schema() {
         let request = test_request(test_tools(), None);
         let user_compat: ProviderCompat =
@@ -573,6 +590,18 @@ mod tests {
         assert_eq!(body["tools"][0]["name"], "read");
         assert!(body["tools"][0].get("input_schema").is_some());
         assert!(body["tools"][0].get("function").is_none());
+    }
+
+    #[test]
+    fn test_classify_tools_wire_shape_mismatch_detects_missing_top_level_name() {
+        // The upstream gateway (often a custom OpenAI-compatible proxy) reports that
+        // `tools[i].name` is missing. The default OpenAI Chat Completions shape nests
+        // the name under `function.name`, so the fix is to switch to the flat
+        // OpenAI shape.
+        let body = r#"{"error":{"message":"The request failed because it is missing `tools[i].name` parameter.","param":"tools[i].name","code":"MissingParameter"}}"#;
+        let hint = classify_tools_wire_shape_mismatch(400, body, ResolvedToolWireShape::OpenAiFunction)
+            .expect("the diagnostic should recognize the missing top-level name");
+        assert!(hint.contains("openai_flat_function"), "hint: {hint}");
     }
 
     #[test]

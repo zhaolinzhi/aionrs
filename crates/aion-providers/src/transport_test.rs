@@ -516,6 +516,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn openai_transport_maps_missing_top_level_tool_name_to_actionable_api_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(400).set_body_string(
+                r#"{"error":{"message":"The request failed because it is missing `tools[i].name` parameter. Request id: 02179179549932466eaec7f9618b149ae48154363bc9cad75822f","type":"BadRequest","param":"tools[i].name","code":"MissingParameter"}}"#,
+            ))
+            .mount(&server)
+            .await;
+        let transport = ProviderTransport::OpenAi(OpenAiTransport::new("test-key", &server.uri()));
+        let compat = ProviderCompat::openai_defaults();
+        let (body, tool_wire_shape) = transport
+            .project_body(&test_request(vec![test_tool()]), &compat)
+            .expect("request body projection should succeed");
+        let request = transport
+            .build_projected_request("test-model", body, &compat, tool_wire_shape)
+            .expect("projected request should build");
+
+        let error = transport
+            .send(request)
+            .await
+            .expect_err("tool shape mismatch should map to api error");
+
+        assert!(matches!(
+            error,
+            ProviderError::Api { status: 400, message }
+                if message.contains("tools wire shape mismatch")
+                    && message.contains("openai_flat_function")
+                    && message.contains("openai_function")
+        ));
+    }
+
+    #[tokio::test]
     async fn anthropic_transport_maps_tool_shape_mismatch_to_actionable_api_error() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))

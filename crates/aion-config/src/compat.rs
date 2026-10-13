@@ -125,6 +125,11 @@ pub enum ToolWireShape {
     Native,
     #[serde(rename = "openai_function")]
     OpenAiFunction,
+    /// OpenAI-shaped tool with a top-level `name` field instead of nesting it
+    /// under `function`. Matches the OpenAI Responses API tool shape and the
+    /// expectations of some custom OpenAI-compatible gateways.
+    #[serde(rename = "openai_flat_function")]
+    OpenAiFlatFunction,
     #[serde(rename = "anthropic_input_schema")]
     AnthropicInputSchema,
 }
