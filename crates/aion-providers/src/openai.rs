@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -35,7 +36,8 @@ impl LlmProvider for OpenAIProvider {
     }
 }
 
-/// State for accumulating tool call deltas by index
+/// State for accumulating tool call deltas
+#[derive(Default)]
 struct ToolCallAccumulator {
     id: String,
     name: String,
@@ -45,6 +47,10 @@ struct ToolCallAccumulator {
 
 pub(crate) struct StreamState {
     tool_calls: Vec<ToolCallAccumulator>,
+    /// Maps a stream `index` to its position in `tool_calls`. Sparse: indices
+    /// that never appeared are never given a position, so gaps cannot turn
+    /// into empty tool calls.
+    tool_call_index: HashMap<usize, usize>,
     input_tokens: u64,
     output_tokens: u64,
     cache_read_tokens: u64,
@@ -62,6 +68,7 @@ impl StreamState {
     pub(crate) fn new() -> Self {
         Self {
             tool_calls: Vec::new(),
+            tool_call_index: HashMap::new(),
             input_tokens: 0,
             output_tokens: 0,
             cache_read_tokens: 0,
@@ -97,16 +104,38 @@ impl StreamState {
         })
     }
 
-    fn get_or_create_tool(&mut self, index: usize) -> &mut ToolCallAccumulator {
-        while self.tool_calls.len() <= index {
-            self.tool_calls.push(ToolCallAccumulator {
-                id: String::new(),
-                name: String::new(),
-                arguments: String::new(),
-                extra: None,
-            });
+    /// Resolve the accumulator a tool-call delta belongs to.
+    ///
+    /// `id` is the stable identity of a call; `index` is only the gateway's
+    /// routing hint and is not guaranteed to start at 0 or stay contiguous
+    /// (some compatible gateways number the first call `index: 1`). Merge by
+    /// id first, then route by index, and never materialize unseen indices:
+    /// a gap is not a call.
+    fn get_or_create_tool(&mut self, index: usize, id: Option<&str>) -> &mut ToolCallAccumulator {
+        if let Some(id) = id
+            && let Some(pos) = self.tool_calls.iter().position(|tc| tc.id == id)
+        {
+            self.tool_call_index.insert(index, pos);
+            return &mut self.tool_calls[pos];
         }
-        &mut self.tool_calls[index]
+
+        let pos = match self.tool_call_index.get(&index).copied() {
+            // A different non-empty id at an already-seen index means the
+            // gateway reused the index for a new call; keep both.
+            Some(pos) if id.is_some_and(|id| !self.tool_calls[pos].id.is_empty() && self.tool_calls[pos].id != id) => {
+                self.start_tool_call(index)
+            }
+            Some(pos) => pos,
+            None => self.start_tool_call(index),
+        };
+        &mut self.tool_calls[pos]
+    }
+
+    fn start_tool_call(&mut self, index: usize) -> usize {
+        let pos = self.tool_calls.len();
+        self.tool_calls.push(ToolCallAccumulator::default());
+        self.tool_call_index.insert(index, pos);
+        pos
     }
 
     pub(crate) fn diagnostics_mut(&mut self) -> &mut OpenAiStreamDiagnostics {
@@ -184,9 +213,10 @@ pub(crate) fn parse_sse_chunk(data: &str, state: &mut StreamState, auto_tool_id:
     if let Some(tool_calls) = delta["tool_calls"].as_array() {
         for tc in tool_calls {
             let index = tc["index"].as_u64().unwrap_or(0) as usize;
-            let acc = state.get_or_create_tool(index);
+            let id = tc["id"].as_str().filter(|id| !id.is_empty());
+            let acc = state.get_or_create_tool(index, id);
 
-            if let Some(id) = tc["id"].as_str() {
+            if let Some(id) = id {
                 acc.id = id.to_string();
             }
             // Only overwrite when non-empty — some third-party APIs send `"name":""`

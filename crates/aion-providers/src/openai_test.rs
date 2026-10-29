@@ -168,6 +168,117 @@ mod tests {
         assert!(state.tool_calls.is_empty(), "tool calls should be drained");
     }
 
+    fn emitted_tool_uses(events: &[LlmEvent]) -> Vec<(String, String, Value)> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                LlmEvent::ToolUse { id, name, input, .. } => Some((id.clone(), name.clone(), input.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn first_tool_call_index_one_does_not_emit_ghost_call() {
+        // Some OpenAI-compatible gateways number the first tool call `index: 1`
+        // instead of the spec's `index: 0`. Index gaps are not calls and must
+        // never be materialized as empty tool calls.
+        let mut state = StreamState::new();
+
+        let chunk1 = r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_list","type":"function","function":{"name":"list_knowledge","arguments":""}}]},"index":0}]}"#;
+        assert!(
+            parse_sse_chunk(chunk1, &mut state, false).is_empty(),
+            "no events until finish_reason"
+        );
+
+        let chunk2 = r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"limit\":5}"}}]},"index":0}]}"#;
+        assert!(parse_sse_chunk(chunk2, &mut state, false).is_empty());
+
+        let chunk3 = r#"{"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}]}"#;
+        let events = parse_sse_chunk(chunk3, &mut state, false);
+
+        let calls = emitted_tool_uses(&events);
+        assert_eq!(
+            calls.len(),
+            1,
+            "index gap must not produce a ghost tool call: {calls:?}"
+        );
+        assert_eq!(calls[0].0, "call_list");
+        assert_eq!(calls[0].1, "list_knowledge");
+        assert_eq!(calls[0].2["limit"], 5);
+    }
+
+    #[test]
+    fn index_gaps_between_tool_calls_do_not_emit_ghosts() {
+        let mut state = StreamState::new();
+
+        let chunk = r#"{"choices":[{"delta":{"tool_calls":[{"index":2,"id":"call_a","function":{"name":"alpha","arguments":"{}"}},{"index":5,"id":"call_b","function":{"name":"beta","arguments":"{}"}}]},"index":0}]}"#;
+        let _ = parse_sse_chunk(chunk, &mut state, false);
+
+        let finish = r#"{"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}]}"#;
+        let events = parse_sse_chunk(finish, &mut state, false);
+
+        let calls = emitted_tool_uses(&events);
+        let names: Vec<&str> = calls.iter().map(|(_, name, _)| name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["alpha", "beta"],
+            "only observed calls may be emitted: {calls:?}"
+        );
+    }
+
+    #[test]
+    fn reused_index_with_distinct_ids_merges_by_id() {
+        // Some gateways restart `index` per call instead of numbering the whole
+        // array. A new id at an already-seen index starts a new call; it must
+        // not merge into (or overwrite) the previous one.
+        let mut state = StreamState::new();
+
+        let call_a_start = r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_a","function":{"name":"alpha","arguments":"{\"a\":"}}]},"index":0}]}"#;
+        let call_a_rest =
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"1}"}}]},"index":0}]}"#;
+        let call_b_start = r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_b","function":{"name":"beta","arguments":"{\"b\":"}}]},"index":0}]}"#;
+        let call_b_rest =
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"2}"}}]},"index":0}]}"#;
+        for chunk in [call_a_start, call_a_rest, call_b_start, call_b_rest] {
+            let _ = parse_sse_chunk(chunk, &mut state, false);
+        }
+
+        let finish = r#"{"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}]}"#;
+        let events = parse_sse_chunk(finish, &mut state, false);
+
+        let calls = emitted_tool_uses(&events);
+        assert_eq!(calls.len(), 2, "two distinct ids are two calls: {calls:?}");
+        assert_eq!(calls[0].0, "call_a");
+        assert_eq!(calls[0].1, "alpha");
+        assert_eq!(calls[0].2["a"], 1);
+        assert_eq!(calls[1].0, "call_b");
+        assert_eq!(calls[1].1, "beta");
+        assert_eq!(calls[1].2["b"], 2);
+    }
+
+    #[test]
+    fn same_id_with_drifting_index_merges_into_one_call() {
+        // `id` is the stable identity of a tool call; `index` is only a routing
+        // hint. Deltas that repeat an id under a different index belong to the
+        // same call.
+        let mut state = StreamState::new();
+
+        let chunk1 = r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_a","function":{"name":"alpha","arguments":"{\"a\":"}}]},"index":0}]}"#;
+        let chunk2 = r#"{"choices":[{"delta":{"tool_calls":[{"index":2,"id":"call_a","function":{"arguments":"1}"}}]},"index":0}]}"#;
+        for chunk in [chunk1, chunk2] {
+            let _ = parse_sse_chunk(chunk, &mut state, false);
+        }
+
+        let finish = r#"{"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}]}"#;
+        let events = parse_sse_chunk(finish, &mut state, false);
+
+        let calls = emitted_tool_uses(&events);
+        assert_eq!(calls.len(), 1, "same id must be one call: {calls:?}");
+        assert_eq!(calls[0].1, "alpha");
+        assert_eq!(calls[0].2["a"], 1);
+    }
+
     // F1-9
     #[test]
     fn test_empty_name_toolcall_still_emitted_to_history() {
