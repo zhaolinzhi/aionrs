@@ -243,6 +243,9 @@ impl BedrockTransportState {
             body,
             body_bytes: Some(body_bytes),
             tool_wire_shape,
+            // The body is SigV4-signed; reshaping it would invalidate the
+            // signature, so automatic correction does not apply.
+            auto_tool_wire_shape: false,
         })
     }
 

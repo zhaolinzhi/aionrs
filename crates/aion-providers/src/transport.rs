@@ -1,4 +1,4 @@
-use aion_config::compat::{OpenAiApiMode, ProviderCompat};
+use aion_config::compat::{OpenAiApiMode, ProviderCompat, ToolWireShape};
 use aion_types::llm::LlmRequest;
 use futures::StreamExt;
 use reqwest::ResponseBuilderExt;
@@ -10,7 +10,7 @@ use crate::error::{ProviderError, provider_error_from_json_body};
 use crate::openai_responses_projector::OpenAiResponsesProjector;
 use crate::projector::{
     AnthropicWireProjector, OpenAiProjector, ResolvedToolWireShape, WireParams, WireProvider,
-    classify_tools_wire_shape_mismatch, projection_to_provider_error,
+    classify_tools_wire_shape_mismatch, expected_tool_wire_shape, projection_to_provider_error,
 };
 use crate::retry::MAX_STREAM_RETRIES;
 use crate::stream_process::StreamDecoder;
@@ -67,6 +67,10 @@ pub(crate) struct ProjectedHttpRequest {
     pub body: Value,
     pub body_bytes: Option<Vec<u8>>,
     pub tool_wire_shape: ResolvedToolWireShape,
+    /// True when no explicit tool wire shape was configured (`Native`). In
+    /// that mode a recognized upstream shape-mismatch error may be corrected
+    /// automatically; an explicit user choice is never overridden.
+    pub auto_tool_wire_shape: bool,
 }
 
 impl OpenAiTransport {
@@ -97,6 +101,7 @@ impl OpenAiTransport {
             body,
             body_bytes: None,
             tool_wire_shape,
+            auto_tool_wire_shape: compat.tool_wire_shape() == ToolWireShape::Native,
         })
     }
 
@@ -136,6 +141,9 @@ impl AnthropicTransport {
             body,
             body_bytes: None,
             tool_wire_shape,
+            // Anthropic-shaped tools are not interchangeable with the OpenAI
+            // flat/nested pair, so automatic correction does not apply.
+            auto_tool_wire_shape: false,
         })
     }
 
@@ -281,26 +289,124 @@ async fn send_projected_json_request(
         body,
         body_bytes,
         tool_wire_shape,
+        auto_tool_wire_shape,
     } = request;
 
-    let builder = client.post(&url).headers(headers);
-    let response = match body_bytes {
-        Some(bytes) => builder.body(bytes).send().await?,
-        None => builder.json(&body).send().await?,
+    let response = match body_bytes.as_ref() {
+        Some(bytes) => {
+            client
+                .post(&url)
+                .headers(headers.clone())
+                .body(bytes.clone())
+                .send()
+                .await?
+        }
+        None => client.post(&url).headers(headers.clone()).json(&body).send().await?,
     };
 
     let status = response.status();
-    if !status.is_success() {
+    let response = if status.is_success() {
+        response
+    } else {
         let body_text = response.text().await.unwrap_or_default();
-        return Err(map_common_status(status.as_u16(), body_text, tool_wire_shape));
-    }
+
+        // In auto-detect mode, a gateway that validates the opposite OpenAI
+        // tool shape gets one correction attempt instead of a hard failure.
+        // An explicit user choice is never overridden.
+        let correction = if auto_tool_wire_shape && body_bytes.is_none() {
+            expected_tool_wire_shape(status.as_u16(), &body_text)
+                .filter(|expected| *expected != tool_wire_shape)
+                .and_then(|expected| {
+                    reshape_tools_wire_shape(&body, tool_wire_shape, expected).map(|body| (expected, body))
+                })
+        } else {
+            None
+        };
+
+        match correction {
+            Some((expected, retry_body)) => {
+                tracing::info!(
+                    target: "aion_providers",
+                    from = tool_wire_shape.as_config_value(),
+                    to = expected.as_config_value(),
+                    "auto-detected tools wire shape mismatch; retrying with the corrected shape"
+                );
+                let retry = client
+                    .post(&url)
+                    .headers(headers.clone())
+                    .json(&retry_body)
+                    .send()
+                    .await?;
+                let retry_status = retry.status();
+                if retry_status.is_success() {
+                    retry
+                } else {
+                    let retry_text = retry.text().await.unwrap_or_default();
+                    return Err(ProviderError::Api {
+                        status: retry_status.as_u16(),
+                        message: format!(
+                            "tools wire shape mismatch: auto-corrected tool_wire_shape to {} but the upstream still rejected the request; upstream error: {}",
+                            expected.as_config_value(),
+                            retry_text
+                        ),
+                    });
+                }
+            }
+            None => return Err(map_common_status(status.as_u16(), body_text, tool_wire_shape)),
+        }
+    };
 
     if is_json_response(&response) {
-        let http_status = status.as_u16();
+        // Use the status of the response actually returned: it may be the
+        // corrected retry rather than the original request.
+        let http_status = response.status().as_u16();
         return inspect_success_json_response(response, http_status).await;
     }
 
     Ok(response)
+}
+
+/// Rewrite an already-projected OpenAI body from one tool wire shape to the
+/// other. Only the OpenAI nested/flat pair is convertible; any other shape
+/// (including Anthropic's `input_schema`) returns `None`.
+fn reshape_tools_wire_shape(body: &Value, from: ResolvedToolWireShape, to: ResolvedToolWireShape) -> Option<Value> {
+    let tools = body.get("tools")?.as_array()?;
+    let reshaped = tools
+        .iter()
+        .map(|tool| reshape_tool(tool, from, to))
+        .collect::<Option<Vec<_>>>()?;
+
+    let mut body = body.clone();
+    body["tools"] = Value::Array(reshaped);
+    Some(body)
+}
+
+fn reshape_tool(tool: &Value, from: ResolvedToolWireShape, to: ResolvedToolWireShape) -> Option<Value> {
+    match (from, to) {
+        (ResolvedToolWireShape::OpenAiFunction, ResolvedToolWireShape::OpenAiFlatFunction) => {
+            let function = tool.get("function")?.as_object()?;
+            let mut flat = tool.as_object()?.clone();
+            flat.remove("function");
+            for key in ["name", "description", "parameters"] {
+                if let Some(value) = function.get(key) {
+                    flat.insert(key.to_string(), value.clone());
+                }
+            }
+            Some(Value::Object(flat))
+        }
+        (ResolvedToolWireShape::OpenAiFlatFunction, ResolvedToolWireShape::OpenAiFunction) => {
+            let mut nested = tool.as_object()?.clone();
+            let mut function = serde_json::Map::new();
+            for key in ["name", "description", "parameters"] {
+                if let Some(value) = nested.remove(key) {
+                    function.insert(key.to_string(), value);
+                }
+            }
+            nested.insert("function".to_string(), Value::Object(function));
+            Some(Value::Object(nested))
+        }
+        _ => None,
+    }
 }
 
 fn is_json_response(response: &reqwest::Response) -> bool {

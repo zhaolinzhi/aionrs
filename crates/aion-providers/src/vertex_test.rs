@@ -132,6 +132,7 @@ mod tests {
             body: json!({"messages": []}),
             body_bytes: None,
             tool_wire_shape: ResolvedToolWireShape::AnthropicInputSchema,
+            auto_tool_wire_shape: false,
         };
 
         let error = transport

@@ -317,32 +317,40 @@ fn projected_tool_schema_mut(tool: &mut Value, shape: ResolvedToolWireShape) -> 
     }
 }
 
-pub(crate) fn classify_tools_wire_shape_mismatch(
-    status: u16,
-    body_text: &str,
-    configured_shape: ResolvedToolWireShape,
-) -> Option<String> {
+/// Return the tool wire shape an upstream 400 response appears to expect.
+///
+/// Recognizes the error bodies emitted by gateways that validate the opposite
+/// OpenAI tool shape. `None` means the response is not a shape mismatch we can
+/// identify (or does not look like one at all).
+pub(crate) fn expected_tool_wire_shape(status: u16, body_text: &str) -> Option<ResolvedToolWireShape> {
     if status != 400 {
         return None;
     }
 
     let lower = body_text.to_ascii_lowercase();
-    let expected_shape =
-        if lower.contains("body.tools[0].function") && (lower.contains("missing") || lower.contains("required")) {
-            Some(ResolvedToolWireShape::OpenAiFunction)
-        } else if lower.contains("tools[i].name")
-            || (lower.contains("tools[0].name") && (lower.contains("missing") || lower.contains("missingparameter")))
-        {
-            // Some custom OpenAI-compatible gateways validate `tools[i].name` at
-            // the top level instead of under `function.name`. The Chat Completions
-            // shape nests the name, so the fix is to switch to the flat OpenAI
-            // shape.
-            Some(ResolvedToolWireShape::OpenAiFlatFunction)
-        } else if lower.contains("input tag function does not match expected custom") {
-            Some(ResolvedToolWireShape::AnthropicInputSchema)
-        } else {
-            None
-        }?;
+    if lower.contains("body.tools[0].function") && (lower.contains("missing") || lower.contains("required")) {
+        Some(ResolvedToolWireShape::OpenAiFunction)
+    } else if lower.contains("tools[i].name")
+        || (lower.contains("tools[0].name") && (lower.contains("missing") || lower.contains("missingparameter")))
+    {
+        // Some custom OpenAI-compatible gateways validate `tools[i].name` at
+        // the top level instead of under `function.name`. The Chat Completions
+        // shape nests the name, so the fix is to switch to the flat OpenAI
+        // shape.
+        Some(ResolvedToolWireShape::OpenAiFlatFunction)
+    } else if lower.contains("input tag function does not match expected custom") {
+        Some(ResolvedToolWireShape::AnthropicInputSchema)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn classify_tools_wire_shape_mismatch(
+    status: u16,
+    body_text: &str,
+    configured_shape: ResolvedToolWireShape,
+) -> Option<String> {
+    let expected_shape = expected_tool_wire_shape(status, body_text)?;
 
     Some(format!(
         "tools wire shape mismatch: configured tool_wire_shape resolved to {}; upstream appears to expect {}; upstream error: {}",

@@ -8,9 +8,31 @@ mod tests {
     use aion_types::llm::LlmRequest;
     use aion_types::message::{ContentBlock, Message, Role};
     use aion_types::tool::ToolDef;
-    use serde_json::json;
+    use serde_json::{Value, json};
     use wiremock::matchers::{body_bytes, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Matches a request whose first tool is projected in the flat shape
+    /// (`name` at the top level) or the nested shape (`function.name`).
+    struct ToolShapeMatcher {
+        expect_flat: bool,
+    }
+
+    impl wiremock::Match for ToolShapeMatcher {
+        fn matches(&self, request: &wiremock::Request) -> bool {
+            let body: Value = serde_json::from_slice(&request.body).unwrap_or_default();
+            let Some(tool) = body
+                .get("tools")
+                .and_then(Value::as_array)
+                .and_then(|tools| tools.first())
+            else {
+                return false;
+            };
+            let is_flat = tool.get("function").is_none() && tool.get("name").is_some();
+            let is_nested = tool.get("function").is_some() && tool["function"].get("name").is_some();
+            if self.expect_flat { is_flat } else { is_nested }
+        }
+    }
 
     use crate::bedrock::{AwsCredentials, BedrockTransportState};
     use crate::error::ProviderError;
@@ -526,7 +548,11 @@ mod tests {
             .mount(&server)
             .await;
         let transport = ProviderTransport::OpenAi(OpenAiTransport::new("test-key", &server.uri()));
-        let compat = ProviderCompat::openai_defaults();
+        // An explicit shape is not auto-corrected, so the mismatch must surface
+        // as an actionable error.
+        let user_compat: ProviderCompat =
+            serde_json::from_value(json!({"tool_wire_shape": "openai_function"})).unwrap();
+        let compat = ProviderCompat::merge(ProviderCompat::openai_defaults(), user_compat);
         let (body, tool_wire_shape) = transport
             .project_body(&test_request(vec![test_tool()]), &compat)
             .expect("request body projection should succeed");
@@ -546,6 +572,142 @@ mod tests {
                     && message.contains("openai_flat_function")
                     && message.contains("openai_function")
         ));
+    }
+
+    #[tokio::test]
+    async fn openai_transport_auto_corrects_flat_tool_shape_when_auto_detecting() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(ToolShapeMatcher { expect_flat: false })
+            .respond_with(ResponseTemplate::new(400).set_body_string(
+                r#"{"error":{"message":"The request failed because it is missing `tools[i].name` parameter.","type":"BadRequest","param":"tools[i].name","code":"MissingParameter"}}"#,
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(ToolShapeMatcher { expect_flat: true })
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string("data: [DONE]\n\n"),
+            )
+            .mount(&server)
+            .await;
+
+        let transport = ProviderTransport::OpenAi(OpenAiTransport::new("test-key", &server.uri()));
+        // `Native` is the "auto-detect" setting: no explicit shape was chosen.
+        let compat = ProviderCompat::openai_defaults();
+        let (body, tool_wire_shape) = transport
+            .project_body(&test_request(vec![test_tool()]), &compat)
+            .expect("request body projection should succeed");
+        let request = transport
+            .build_projected_request("test-model", body, &compat, tool_wire_shape)
+            .expect("projected request should build");
+
+        let response = transport
+            .send(request)
+            .await
+            .expect("auto mode should retry with the flat shape instead of failing");
+
+        assert_eq!(response.status().as_u16(), 200);
+        let requests = server
+            .received_requests()
+            .await
+            .expect("request log should be available");
+        assert_eq!(
+            requests.len(),
+            2,
+            "expected one rejected request and one corrected retry"
+        );
+        let retry_body: Value = serde_json::from_slice(&requests[1].body).expect("retry body should be JSON");
+        assert_eq!(retry_body["tools"][0]["name"], "read");
+        assert!(
+            retry_body["tools"][0].get("function").is_none(),
+            "retry must drop the nested `function` wrapper: {retry_body}"
+        );
+    }
+
+    #[test]
+    fn reshape_tools_wire_shape_converts_between_openai_shapes() {
+        let nested = json!({
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "read",
+                    "description": "Read",
+                    "parameters": {"type": "object"}
+                }
+            }]
+        });
+
+        let flat = reshape_tools_wire_shape(
+            &nested,
+            ResolvedToolWireShape::OpenAiFunction,
+            ResolvedToolWireShape::OpenAiFlatFunction,
+        )
+        .expect("nested -> flat should be supported");
+        assert_eq!(flat["tools"][0]["name"], "read");
+        assert_eq!(flat["tools"][0]["parameters"], json!({"type": "object"}));
+        assert!(flat["tools"][0].get("function").is_none());
+
+        let round_trip = reshape_tools_wire_shape(
+            &flat,
+            ResolvedToolWireShape::OpenAiFlatFunction,
+            ResolvedToolWireShape::OpenAiFunction,
+        )
+        .expect("flat -> nested should be supported");
+        assert_eq!(round_trip["tools"][0]["function"]["name"], "read");
+        assert!(round_trip["tools"][0].get("name").is_none());
+
+        assert!(
+            reshape_tools_wire_shape(
+                &nested,
+                ResolvedToolWireShape::OpenAiFunction,
+                ResolvedToolWireShape::AnthropicInputSchema,
+            )
+            .is_none(),
+            "shapes outside the OpenAI flat/nested pair must not be converted"
+        );
+    }
+
+    #[tokio::test]
+    async fn openai_transport_keeps_explicit_tool_shape_on_mismatch() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(400).set_body_string(
+                r#"{"error":{"message":"The request failed because it is missing `tools[i].name` parameter.","param":"tools[i].name","code":"MissingParameter"}}"#,
+            ))
+            .mount(&server)
+            .await;
+
+        let transport = ProviderTransport::OpenAi(OpenAiTransport::new("test-key", &server.uri()));
+        let user_compat: ProviderCompat =
+            serde_json::from_value(json!({"tool_wire_shape": "openai_function"})).unwrap();
+        let compat = ProviderCompat::merge(ProviderCompat::openai_defaults(), user_compat);
+        let (body, tool_wire_shape) = transport
+            .project_body(&test_request(vec![test_tool()]), &compat)
+            .expect("request body projection should succeed");
+        let request = transport
+            .build_projected_request("test-model", body, &compat, tool_wire_shape)
+            .expect("projected request should build");
+
+        let error = transport
+            .send(request)
+            .await
+            .expect_err("an explicit shape must not be silently overridden");
+
+        assert!(matches!(
+            error,
+            ProviderError::Api { status: 400, message } if message.contains("tools wire shape mismatch")
+        ));
+        let requests = server
+            .received_requests()
+            .await
+            .expect("request log should be available");
+        assert_eq!(requests.len(), 1, "explicit shape must not auto-retry");
     }
 
     #[tokio::test]
@@ -658,6 +820,7 @@ mod tests {
             body: json!({}),
             body_bytes: None,
             tool_wire_shape: ResolvedToolWireShape::AnthropicInputSchema,
+            auto_tool_wire_shape: false,
         };
 
         let bedrock_error = bedrock
@@ -703,6 +866,7 @@ mod tests {
             body: json!({"this": "must not be serialized"}),
             body_bytes: Some(expected_body_bytes),
             tool_wire_shape: ResolvedToolWireShape::AnthropicInputSchema,
+            auto_tool_wire_shape: false,
         };
 
         bedrock

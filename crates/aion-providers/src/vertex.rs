@@ -110,6 +110,9 @@ impl VertexTransportState {
             body,
             body_bytes: None,
             tool_wire_shape,
+            // Vertex uses Anthropic-shaped tools; the OpenAI flat/nested
+            // correction does not apply.
+            auto_tool_wire_shape: false,
         })
     }
 
