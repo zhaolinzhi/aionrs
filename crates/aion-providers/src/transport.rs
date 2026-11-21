@@ -199,7 +199,11 @@ impl ProviderTransport {
                 OpenAiApiMode::Responses => {
                     let body =
                         OpenAiResponsesProjector::project(request, compat).map_err(projection_to_provider_error)?;
-                    Ok((body, ResolvedToolWireShape::OpenAiFunction))
+                    // Match what the projector actually emitted (resolved
+                    // from `compat`), not a hardcoded default. Without this,
+                    // the wire-shape mismatch classifier reports the wrong
+                    // configured shape whenever the user overrode it.
+                    Ok((body, ResolvedToolWireShape::resolve(compat)))
                 }
             },
 
