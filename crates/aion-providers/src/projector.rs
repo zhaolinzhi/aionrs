@@ -234,6 +234,20 @@ impl ResolvedToolWireShape {
             Self::AnthropicInputSchema => "anthropic_input_schema",
         }
     }
+
+    /// Resolve the configured wire shape from `compat` for an OpenAI-style
+    /// projector. The OpenAI Responses API does not really have a "native"
+    /// shape distinct from the Chat Completions flat shape, so we resolve
+    /// `ToolWireShape::Native` to `OpenAiFlatFunction` here (the same shape
+    /// Responses expects) and forward every other variant verbatim.
+    pub(crate) fn resolve(compat: &ProviderCompat) -> Self {
+        match compat.tool_wire_shape() {
+            ToolWireShape::Native => Self::OpenAiFlatFunction,
+            ToolWireShape::OpenAiFunction => Self::OpenAiFunction,
+            ToolWireShape::OpenAiFlatFunction => Self::OpenAiFlatFunction,
+            ToolWireShape::AnthropicInputSchema => Self::AnthropicInputSchema,
+        }
+    }
 }
 
 fn resolve_tool_wire_shape(compat: &ProviderCompat, native: ResolvedToolWireShape) -> ResolvedToolWireShape {

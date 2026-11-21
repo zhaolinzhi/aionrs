@@ -33,10 +33,22 @@ impl OpenAiResponsesProjector {
 
         let mut tool_count = 0;
         if !request.tools.is_empty() && compat.emit_tools() {
-            let tools = project_tools(&request.tools, ResolvedToolWireShape::OpenAiFunction)
-                .into_iter()
-                .filter_map(flatten_function_tool)
-                .collect::<Vec<_>>();
+            // Resolve the wire shape from `compat` so a user override of
+            // `tool_wire_shape` (e.g. `openai_flat_function`) actually
+            // flows through. Previously this hardcoded `OpenAiFunction`
+            // and unconditionally ran `flatten_function_tool`, which
+            // both ignored the override AND lied to the wire-shape
+            // mismatch classifier.
+            let shape = ResolvedToolWireShape::resolve(compat);
+            let mut tools = project_tools(&request.tools, shape);
+            if shape == ResolvedToolWireShape::OpenAiFunction {
+                // The `OpenAiFunction` projection nests name/description/
+                // parameters under `function`. Responses expects the flat
+                // shape, so we hoist the inner `function` object to the top
+                // level here. Other shapes (flat, anthropic) already emit
+                // the right structure and must pass through untouched.
+                tools = tools.into_iter().filter_map(flatten_function_tool).collect();
+            }
             tool_count = tools.len();
             body["tools"] = json!(tools);
         } else if !request.tools.is_empty() {

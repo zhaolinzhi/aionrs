@@ -3,6 +3,7 @@ use super::*;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openai_responses_projector::OpenAiResponsesProjector;
     use aion_config::compat::ModelMaxTokensRule;
     use aion_config::schema::legalize_json_schema;
     use aion_types::message::{ContentBlock, Message, Role};
@@ -590,6 +591,69 @@ mod tests {
         assert_eq!(body["tools"][0]["name"], "read");
         assert!(body["tools"][0].get("input_schema").is_some());
         assert!(body["tools"][0].get("function").is_none());
+    }
+
+    #[test]
+    fn test_tool_wire_shape_responses_default_emits_flat() {
+        // The OpenAI Responses API path's native shape is flat
+        // (name/description/parameters at the top level). Without a user
+        // override, the projector should still produce flat entries.
+        let request = test_request(test_tools(), None);
+        let body = OpenAiResponsesProjector::project(&request, &ProviderCompat::openai_defaults())
+            .expect("request body projection should succeed");
+
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["tools"][0]["name"], "read");
+        assert!(body["tools"][0].get("parameters").is_some());
+        assert!(body["tools"][0].get("function").is_none());
+    }
+
+    #[test]
+    fn test_tool_wire_shape_responses_override_openai_flat_function() {
+        // User explicitly asks for the flat shape. The projector must
+        // honor the override AND the resolved shape must reflect that,
+        // otherwise the wire-shape mismatch classifier misreports the
+        // configured shape on a 400.
+        let request = test_request(test_tools(), None);
+        let user_compat: ProviderCompat =
+            serde_json::from_value(json!({"tool_wire_shape": "openai_flat_function"})).unwrap();
+        let compat = ProviderCompat::merge(ProviderCompat::openai_defaults(), user_compat);
+
+        let body =
+            OpenAiResponsesProjector::project(&request, &compat).expect("request body projection should succeed");
+
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["tools"][0]["name"], "read");
+        assert!(body["tools"][0].get("parameters").is_some());
+        assert!(body["tools"][0].get("function").is_none());
+        assert_eq!(
+            ResolvedToolWireShape::resolve(&compat),
+            ResolvedToolWireShape::OpenAiFlatFunction
+        );
+    }
+
+    #[test]
+    fn test_tool_wire_shape_responses_override_openai_function_passes_through() {
+        // User explicitly asks for the nested OpenAI function shape on
+        // the Responses path. The Responses API does not support that
+        // shape and will reject it, but the projector must faithfully
+        // emit what the user asked for (no implicit flatten) so the
+        // classifier can report the correct configured shape.
+        let request = test_request(test_tools(), None);
+        let user_compat: ProviderCompat =
+            serde_json::from_value(json!({"tool_wire_shape": "openai_function"})).unwrap();
+        let compat = ProviderCompat::merge(ProviderCompat::openai_defaults(), user_compat);
+
+        let body =
+            OpenAiResponsesProjector::project(&request, &compat).expect("request body projection should succeed");
+
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["tools"][0]["function"]["name"], "read");
+        assert!(body["tools"][0].get("name").is_none());
+        assert_eq!(
+            ResolvedToolWireShape::resolve(&compat),
+            ResolvedToolWireShape::OpenAiFunction
+        );
     }
 
     #[test]
